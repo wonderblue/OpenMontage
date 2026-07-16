@@ -94,3 +94,4 @@ remotion-composer/public/demo-props/caption-burn-*
 
 venv/
 .venv/
+.~lock.*#
