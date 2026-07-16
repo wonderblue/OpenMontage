@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from tools.base_tool import (
     BaseTool,
@@ -37,9 +38,8 @@ class PiperTTS(BaseTool):
     install_instructions = (
         "Install Piper TTS:\n"
         "  pip install piper-tts\n"
-        "Or download from https://github.com/rhasspy/piper/releases\n"
         "Then download a voice model:\n"
-        "  piper --download-dir ~/.piper/models --model en_US-lessac-medium"
+        "  python -m piper.download_voices en_US-lessac-medium --download-dir ~/.piper/models"
     )
     agent_skills = ["text-to-speech"]
 
@@ -95,8 +95,29 @@ class PiperTTS(BaseTool):
     side_effects = ["writes audio file to output_path"]
     user_visible_verification = ["Listen to generated audio for intelligibility"]
 
+    @staticmethod
+    def _piper_binary() -> Optional[str]:
+        found = shutil.which("piper")
+        if found:
+            return found
+        venv_piper = Path(sys.prefix) / "bin" / "piper"
+        if venv_piper.is_file():
+            return str(venv_piper)
+        return None
+
+    @staticmethod
+    def _resolve_model(model: str) -> str:
+        path = Path(model).expanduser()
+        if path.is_file():
+            return str(path)
+        models_dir = Path.home() / ".piper" / "models"
+        for candidate in (models_dir / f"{model}.onnx", models_dir / model):
+            if candidate.is_file():
+                return str(candidate)
+        return model
+
     def get_status(self) -> ToolStatus:
-        if shutil.which("piper"):
+        if self._piper_binary():
             return ToolStatus.AVAILABLE
         try:
             import piper  # noqa: F401
@@ -124,10 +145,15 @@ class PiperTTS(BaseTool):
         output_path = Path(inputs.get("output_path", "tts_output.wav"))
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        piper_bin = self._piper_binary()
+        if not piper_bin:
+            return ToolResult(success=False, error="Piper TTS not available. " + self.install_instructions)
+
+        model = self._resolve_model(inputs.get("model", "en_US-lessac-medium"))
         proc = subprocess.run(
             [
-                "piper",
-                "--model", inputs.get("model", "en_US-lessac-medium"),
+                piper_bin,
+                "--model", model,
                 "--speaker", str(inputs.get("speaker_id", 0)),
                 "--length-scale", str(inputs.get("length_scale", 1.0)),
                 "--sentence-silence", str(inputs.get("sentence_silence", 0.3)),
